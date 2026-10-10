@@ -170,7 +170,11 @@
     }
 
     document.getElementById("muat").addEventListener("click", muatData);
-    muatData();
+muatData();
+
+setInterval(() => {
+  if (!document.hidden) muatData();
+}, 60000);
   </script>
 </body>
 </html>
