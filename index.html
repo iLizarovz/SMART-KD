@@ -3,32 +3,33 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Riwayat Suhu</title>
+  <title>SMART-KD Monitoring</title>
   <style>
-    body { font-family: Arial, sans-serif; max-width: 1000px; margin: 24px auto;
-           padding: 0 16px; color: #222; }
-    canvas { width: 100%; height: auto; border: 1px solid #ddd; }
-    button { padding: 8px 14px; cursor: pointer; }
+    body { font-family: Arial, sans-serif; max-width: 1000px;
+           margin: 24px auto; padding: 0 16px; color: #222; }
+    .grafik-scroll { overflow-x: auto; }
+    canvas { display: block; border: 1px solid #ddd; }
+    button { padding: 8px 14px; }
     table { border-collapse: collapse; width: 100%; margin-top: 12px; }
     th, td { padding: 8px; border-bottom: 1px solid #ddd; text-align: left; }
-    .keterangan { color: #555; }
   </style>
 </head>
 <body>
-  <h1>Riwayat Suhu</h1>
-  <p class="keterangan">
-    Waktu ditampilkan dalam WIB. Garis biru = sampel suhu;
-    merah = alarm mulai; hijau = alarm berakhir.
-  </p>
+  <h1>SMART-KD Monitoring</h1>
+  <p>Garis biru: sampel suhu. Garis merah: alarm mulai.
+     Garis hijau: alarm berakhir. Geser grafik untuk melihat seluruh titik.</p>
   <button id="muat">Muat ulang</button>
   <p id="status">Memuat data...</p>
 
-  <canvas id="grafik" width="900" height="350"></canvas>
+  <div class="grafik-scroll">
+    <canvas id="grafik" width="900" height="390"></canvas>
+  </div>
 
   <h2>Kejadian alarm terbaru</h2>
   <table>
     <thead>
-      <tr><th>Waktu diterima (WIB)</th><th>Kejadian</th><th>Suhu</th><th>Perubahan</th></tr>
+      <tr><th>Waktu diterima (WIB)</th><th>Kejadian</th>
+          <th>Suhu</th><th>Perubahan</th></tr>
     </thead>
     <tbody id="daftar-alarm"></tbody>
   </table>
@@ -45,109 +46,123 @@
     function waktuWIB(nilai) {
       return new Intl.DateTimeFormat("id-ID", {
         timeZone: "Asia/Jakarta",
-        dateStyle: "short",
-        timeStyle: "medium"
+        day: "2-digit", month: "2-digit", year: "numeric",
+        hour: "2-digit", minute: "2-digit", second: "2-digit",
+        hourCycle: "h23"
       }).format(new Date(nilai));
     }
 
     function gambarGrafik(samples, alarms) {
-      const W = canvas.width, H = canvas.height;
-      const kiri = 65, kanan = W - 25, atas = 25, bawah = H - 55;
-      ctx.clearRect(0, 0, W, H);
-
-      if (samples.length === 0) {
-        ctx.fillText("Belum ada sampel suhu.", kiri, atas + 20);
-        return;
-      }
-
       const data = samples
-        .map(s => ({ t: Date.parse(s.received_at), v: Number(s.temperature_c) }))
+        .map(s => ({
+          t: Date.parse(s.received_at),
+          v: Number(s.temperature_c)
+        }))
         .filter(s => Number.isFinite(s.t) && Number.isFinite(s.v))
         .sort((a, b) => a.t - b.t);
 
-      if (data.length === 0) {
-        ctx.fillText("Sampel tidak valid.", kiri, atas + 20);
+      canvas.width = Math.max(900, data.length * 135 + 100);
+      canvas.height = 390;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      const kiri = 70, atas = 35, bawah = 305;
+      const jarak = (canvas.width - kiri - 55) /
+                    Math.max(1, data.length - 1);
+
+      if (!data.length) {
+        ctx.fillText("Belum ada sampel suhu yang valid.", kiri, atas);
         return;
       }
 
-      const tMin = data[0].t;
-      const tMax = data[data.length - 1].t;
-      const alarmDalamRentang = alarms
-        .map(a => ({
-          t: Date.parse(a.received_at),
-          v: Number(a.temperature_c),
-          jenis: a.event_type
-        }))
-        .filter(a => Number.isFinite(a.t) &&
-                     a.t >= tMin && a.t <= tMax);
-
-      const nilai = data.map(s => s.v).concat(
-        alarmDalamRentang.filter(a => Number.isFinite(a.v)).map(a => a.v)
-      );
-      const vMin = Math.min(...nilai) - 2;
-      const vMax = Math.max(...nilai) + 2;
-      const x = t => kiri + (tMax === tMin ? 0.5 :
-        (t - tMin) / (tMax - tMin)) * (kanan - kiri);
-      const y = v => bawah - (v - vMin) / (vMax - vMin) * (bawah - atas);
+      const nilai = data.map(s => s.v);
+      const rentang = Math.max(2, Math.max(...nilai) - Math.min(...nilai));
+      const min = Math.min(...nilai) - rentang * 0.2;
+      const max = Math.max(...nilai) + rentang * 0.2;
+      const x = i => kiri + (data.length === 1 ? jarak / 2 : i * jarak);
+      const y = v => bawah - (v - min) / (max - min) * (bawah - atas);
 
       ctx.strokeStyle = "#999";
       ctx.beginPath();
       ctx.moveTo(kiri, atas);
       ctx.lineTo(kiri, bawah);
-      ctx.lineTo(kanan, bawah);
+      ctx.lineTo(canvas.width - 25, bawah);
       ctx.stroke();
 
       ctx.fillStyle = "#333";
       ctx.font = "12px Arial";
-      ctx.fillText(vMax.toFixed(1) + " °C", 4, atas + 5);
-      ctx.fillText(vMin.toFixed(1) + " °C", 4, bawah);
-      ctx.fillText(waktuWIB(tMin), kiri, H - 20);
-      ctx.fillText(waktuWIB(tMax), kanan - 150, H - 20);
+      ctx.fillText(max.toFixed(1) + " °C", 5, atas + 5);
+      ctx.fillText(min.toFixed(1) + " °C", 5, bawah);
+
+      // Tempatkan alarm menurut waktunya di antara dua sampel terdekat.
+      for (const a of alarms) {
+        const t = Date.parse(a.received_at);
+        if (!Number.isFinite(t) || t < data[0].t ||
+            t > data[data.length - 1].t) continue;
+
+        let posisi = x(0);
+        for (let i = 0; i < data.length - 1; i++) {
+          if (t >= data[i].t && t <= data[i + 1].t) {
+            const durasi = data[i + 1].t - data[i].t;
+            const fraksi = durasi ? (t - data[i].t) / durasi : 0;
+            posisi = x(i) + fraksi * (x(i + 1) - x(i));
+            break;
+          }
+        }
+
+        ctx.strokeStyle = a.event_type === "start"
+          ? "#c62828" : "#2e7d32";
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(posisi, atas);
+        ctx.lineTo(posisi, bawah);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
 
       ctx.strokeStyle = "#1769aa";
       ctx.lineWidth = 2;
       ctx.beginPath();
       data.forEach((s, i) => {
-        if (i === 0) ctx.moveTo(x(s.t), y(s.v));
-        else ctx.lineTo(x(s.t), y(s.v));
+        if (i === 0) ctx.moveTo(x(i), y(s.v));
+        else ctx.lineTo(x(i), y(s.v));
       });
       ctx.stroke();
 
-      for (const a of alarmDalamRentang) {
-        const warna = a.jenis === "start" ? "#c62828" : "#2e7d32";
-        ctx.strokeStyle = warna;
-        ctx.setLineDash([4, 4]);
+      data.forEach((s, i) => {
+        const posisi = x(i);
+        ctx.fillStyle = "#1769aa";
         ctx.beginPath();
-        ctx.moveTo(x(a.t), atas);
-        ctx.lineTo(x(a.t), bawah);
-        ctx.stroke();
-        ctx.setLineDash([]);
+        ctx.arc(posisi, y(s.v), 4, 0, 2 * Math.PI);
+        ctx.fill();
 
-        if (Number.isFinite(a.v)) {
-          ctx.fillStyle = warna;
-          ctx.beginPath();
-          ctx.arc(x(a.t), y(a.v), 5, 0, 2 * Math.PI);
-          ctx.fill();
-        }
-      }
+        ctx.textAlign = "center";
+        ctx.font = "12px Arial";
+        ctx.fillText(s.v.toFixed(2) + " °C", posisi, y(s.v) - 11);
+
+        const [tanggal, jam] = waktuWIB(s.t).split(", ");
+        ctx.fillStyle = "#333";
+        ctx.font = "11px Arial";
+        ctx.fillText(jam || "", posisi, bawah + 20);
+        ctx.fillText(tanggal, posisi, bawah + 36);
+      });
+      ctx.textAlign = "start";
     }
 
     function tampilkanAlarm(alarms) {
       daftarAlarm.replaceChildren();
       for (const a of [...alarms].reverse()) {
-        const tr = document.createElement("tr");
-        const isi = [
+        const baris = document.createElement("tr");
+        for (const isi of [
           waktuWIB(a.received_at),
           a.event_type,
           a.temperature_c == null ? "-" : a.temperature_c + " °C",
           a.change_c == null ? "-" : a.change_c + " °C"
-        ];
-        for (const teks of isi) {
-          const td = document.createElement("td");
-          td.textContent = teks;
-          tr.appendChild(td);
+        ]) {
+          const sel = document.createElement("td");
+          sel.textContent = isi;
+          baris.appendChild(sel);
         }
-        daftarAlarm.appendChild(tr);
+        daftarAlarm.appendChild(baris);
       }
     }
 
@@ -157,24 +172,24 @@
         const respons = await fetch(URL_FUNGSI);
         if (!respons.ok) throw new Error("HTTP " + respons.status);
         const data = await respons.json();
-        if (!Array.isArray(data.samples) || !Array.isArray(data.alarms)) {
+        if (!Array.isArray(data.samples) ||
+            !Array.isArray(data.alarms)) {
           throw new Error("Format respons tidak sesuai");
         }
         gambarGrafik(data.samples, data.alarms);
         tampilkanAlarm(data.alarms);
-        statusEl.textContent =
-          `${data.samples.length} sampel dan ${data.alarms.length} kejadian alarm dimuat.`;
+        statusEl.textContent = `${data.samples.length} sampel dan ` +
+          `${data.alarms.length} kejadian alarm dimuat.`;
       } catch (galat) {
         statusEl.textContent = "Gagal memuat data: " + galat.message;
       }
     }
 
     document.getElementById("muat").addEventListener("click", muatData);
-muatData();
-
-setInterval(() => {
-  if (!document.hidden) muatData();
-}, 60000);
+    muatData();
+    setInterval(() => {
+      if (!document.hidden) muatData();
+    }, 60000);
   </script>
 </body>
 </html>
