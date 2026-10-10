@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Riwayat Suhu</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 1000px; margin: 24px auto;
+           padding: 0 16px; color: #222; }
+    canvas { width: 100%; height: auto; border: 1px solid #ddd; }
+    button { padding: 8px 14px; cursor: pointer; }
+    table { border-collapse: collapse; width: 100%; margin-top: 12px; }
+    th, td { padding: 8px; border-bottom: 1px solid #ddd; text-align: left; }
+    .keterangan { color: #555; }
+  </style>
+</head>
+<body>
+  <h1>Riwayat Suhu</h1>
+  <p class="keterangan">
+    Waktu ditampilkan dalam WIB. Garis biru = sampel suhu;
+    merah = alarm mulai; hijau = alarm berakhir.
+  </p>
+  <button id="muat">Muat ulang</button>
+  <p id="status">Memuat data...</p>
+
+  <canvas id="grafik" width="900" height="350"></canvas>
+
+  <h2>Kejadian alarm terbaru</h2>
+  <table>
+    <thead>
+      <tr><th>Waktu diterima (WIB)</th><th>Kejadian</th><th>Suhu</th><th>Perubahan</th></tr>
+    </thead>
+    <tbody id="daftar-alarm"></tbody>
+  </table>
+
+  <script>
+    const URL_FUNGSI =
+      "https://waklwxmzqeftmklicrfv.supabase.co/functions/v1/temperature-history";
+
+    const canvas = document.getElementById("grafik");
+    const ctx = canvas.getContext("2d");
+    const statusEl = document.getElementById("status");
+    const daftarAlarm = document.getElementById("daftar-alarm");
+
+    function waktuWIB(nilai) {
+      return new Intl.DateTimeFormat("id-ID", {
+        timeZone: "Asia/Jakarta",
+        dateStyle: "short",
+        timeStyle: "medium"
+      }).format(new Date(nilai));
+    }
+
+    function gambarGrafik(samples, alarms) {
+      const W = canvas.width, H = canvas.height;
+      const kiri = 65, kanan = W - 25, atas = 25, bawah = H - 55;
+      ctx.clearRect(0, 0, W, H);
+
+      if (samples.length === 0) {
+        ctx.fillText("Belum ada sampel suhu.", kiri, atas + 20);
+        return;
+      }
+
+      const data = samples
+        .map(s => ({ t: Date.parse(s.received_at), v: Number(s.temperature_c) }))
+        .filter(s => Number.isFinite(s.t) && Number.isFinite(s.v))
+        .sort((a, b) => a.t - b.t);
+
+      if (data.length === 0) {
+        ctx.fillText("Sampel tidak valid.", kiri, atas + 20);
+        return;
+      }
+
+      const tMin = data[0].t;
+      const tMax = data[data.length - 1].t;
+      const alarmDalamRentang = alarms
+        .map(a => ({
+          t: Date.parse(a.received_at),
+          v: Number(a.temperature_c),
+          jenis: a.event_type
+        }))
+        .filter(a => Number.isFinite(a.t) &&
+                     a.t >= tMin && a.t <= tMax);
+
+      const nilai = data.map(s => s.v).concat(
+        alarmDalamRentang.filter(a => Number.isFinite(a.v)).map(a => a.v)
+      );
+      const vMin = Math.min(...nilai) - 2;
+      const vMax = Math.max(...nilai) + 2;
+      const x = t => kiri + (tMax === tMin ? 0.5 :
+        (t - tMin) / (tMax - tMin)) * (kanan - kiri);
+      const y = v => bawah - (v - vMin) / (vMax - vMin) * (bawah - atas);
+
+      ctx.strokeStyle = "#999";
+      ctx.beginPath();
+      ctx.moveTo(kiri, atas);
+      ctx.lineTo(kiri, bawah);
+      ctx.lineTo(kanan, bawah);
+      ctx.stroke();
+
+      ctx.fillStyle = "#333";
+      ctx.font = "12px Arial";
+      ctx.fillText(vMax.toFixed(1) + " °C", 4, atas + 5);
+      ctx.fillText(vMin.toFixed(1) + " °C", 4, bawah);
+      ctx.fillText(waktuWIB(tMin), kiri, H - 20);
+      ctx.fillText(waktuWIB(tMax), kanan - 150, H - 20);
+
+      ctx.strokeStyle = "#1769aa";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      data.forEach((s, i) => {
+        if (i === 0) ctx.moveTo(x(s.t), y(s.v));
+        else ctx.lineTo(x(s.t), y(s.v));
+      });
+      ctx.stroke();
+
+      for (const a of alarmDalamRentang) {
+        const warna = a.jenis === "start" ? "#c62828" : "#2e7d32";
+        ctx.strokeStyle = warna;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(x(a.t), atas);
+        ctx.lineTo(x(a.t), bawah);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        if (Number.isFinite(a.v)) {
+          ctx.fillStyle = warna;
+          ctx.beginPath();
+          ctx.arc(x(a.t), y(a.v), 5, 0, 2 * Math.PI);
+          ctx.fill();
+        }
+      }
+    }
+
+    function tampilkanAlarm(alarms) {
+      daftarAlarm.replaceChildren();
+      for (const a of [...alarms].reverse()) {
+        const tr = document.createElement("tr");
+        const isi = [
+          waktuWIB(a.received_at),
+          a.event_type,
+          a.temperature_c == null ? "-" : a.temperature_c + " °C",
+          a.change_c == null ? "-" : a.change_c + " °C"
+        ];
+        for (const teks of isi) {
+          const td = document.createElement("td");
+          td.textContent = teks;
+          tr.appendChild(td);
+        }
+        daftarAlarm.appendChild(tr);
+      }
+    }
+
+    async function muatData() {
+      statusEl.textContent = "Memuat data...";
+      try {
+        const respons = await fetch(URL_FUNGSI);
+        if (!respons.ok) throw new Error("HTTP " + respons.status);
+        const data = await respons.json();
+        if (!Array.isArray(data.samples) || !Array.isArray(data.alarms)) {
+          throw new Error("Format respons tidak sesuai");
+        }
+        gambarGrafik(data.samples, data.alarms);
+        tampilkanAlarm(data.alarms);
+        statusEl.textContent =
+          `${data.samples.length} sampel dan ${data.alarms.length} kejadian alarm dimuat.`;
+      } catch (galat) {
+        statusEl.textContent = "Gagal memuat data: " + galat.message;
+      }
+    }
+
+    document.getElementById("muat").addEventListener("click", muatData);
+    muatData();
+  </script>
+</body>
+</html>
